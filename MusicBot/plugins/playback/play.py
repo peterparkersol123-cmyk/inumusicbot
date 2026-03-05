@@ -1,0 +1,193 @@
+import logging
+from pyrogram import Client, filters
+from pyrogram.types import Message
+
+from MusicBot import bot, queue, call, youtube, db
+from MusicBot.helpers._play import checkUB
+from MusicBot.helpers._queue import Track
+from MusicBot.helpers._utilities import safe_edit, format_duration
+from config import Config
+
+LOGGER = logging.getLogger("MusicBot.Plugin.Play")
+
+
+@bot.on_message(filters.command(["play", "p"]) & filters.group)
+@checkUB
+async def play_cmd(client: Client, message: Message, query: str = ""):
+    await _play_handler(client, message, query, force=False)
+
+
+@bot.on_message(filters.command(["playforce", "pf"]) & filters.group)
+@checkUB
+async def playforce_cmd(client: Client, message: Message, query: str = ""):
+    await _play_handler(client, message, query, force=True)
+
+
+async def _play_handler(client: Client, message: Message, query: str, force: bool):
+    chat_id = message.chat.id
+    user = message.from_user
+
+    # --- Handle replied audio/document ---
+    reply = message.reply_to_message
+    if not query and reply and (reply.audio or reply.document or reply.video):
+        await _play_telegram_file(client, message, reply, force)
+        return
+
+    status_msg = await message.reply("<i>Searching...</i>")
+
+    # --- YouTube playlist ---
+    if youtube.is_url(query) and youtube.is_playlist(query):
+        await safe_edit(status_msg, "<i>Fetching playlist...</i>")
+        tracks = await youtube.get_playlist(query, limit=Config.QUEUE_LIMIT)
+        if not tracks:
+            return await safe_edit(status_msg, "Could not fetch playlist. Try a direct link.")
+
+        added = 0
+        for t in tracks:
+            if queue.is_full(chat_id):
+                break
+            track = Track(
+                title=t["title"],
+                url=t["url"],
+                duration=t.get("duration", 0),
+                thumbnail=None,
+                requested_by=user.id,
+                requested_by_name=user.first_name,
+            )
+            queue.add(chat_id, track)
+            added += 1
+
+        await safe_edit(status_msg, f"Added <b>{added}</b> tracks from playlist to queue.")
+        if not call.is_active(chat_id):
+            await _start_playing(chat_id, status_msg)
+        return
+
+    # --- Single YouTube URL or search query ---
+    if youtube.is_url(query):
+        info = await youtube.get_info(query)
+    else:
+        results = await youtube.search(query, limit=1)
+        if not results:
+            return await safe_edit(status_msg, "No results found. Try a different query.")
+        info = {
+            "title": results[0].get("title", "Unknown"),
+            "url": results[0].get("link", results[0].get("url", "")),
+            "duration": _parse_duration(results[0].get("duration", "0:00")),
+            "thumbnail": results[0].get("thumbnails", [{}])[0].get("url"),
+        }
+
+    if not info:
+        return await safe_edit(status_msg, "Could not fetch song info. Try a direct YouTube link.")
+
+    # Duration limit
+    if info.get("duration", 0) > Config.DURATION_LIMIT and not info.get("is_live"):
+        return await safe_edit(
+            status_msg,
+            f"Song exceeds duration limit ({Config.DURATION_LIMIT // 60} min)."
+        )
+
+    track = Track(
+        title=info["title"],
+        url=info["url"],
+        duration=info.get("duration", 0),
+        thumbnail=info.get("thumbnail"),
+        requested_by=user.id,
+        requested_by_name=user.first_name,
+        is_live=info.get("is_live", False),
+    )
+
+    if force and call.is_active(chat_id):
+        queue.add_next(chat_id, track)
+        await safe_edit(status_msg, f"Force playing: <b>{track.title}</b>")
+        await _skip_to_next(chat_id)
+        return
+
+    pos = queue.add(chat_id, track)
+
+    if pos == 0 or not call.is_active(chat_id):
+        # First track or bot not yet in VC — start playing
+        await safe_edit(status_msg, f"Playing: <b>{track.title}</b> [{track.duration_str()}]")
+        await _start_playing(chat_id, status_msg)
+    else:
+        await safe_edit(
+            status_msg,
+            f"Added to queue at position <b>#{pos}</b>: <b>{track.title}</b> [{track.duration_str()}]"
+        )
+
+
+async def _play_telegram_file(client: Client, message: Message, reply: Message, force: bool):
+    chat_id = message.chat.id
+    user = message.from_user
+    media = reply.audio or reply.document or reply.video
+
+    status_msg = await message.reply("<i>Downloading file...</i>")
+    file_path = await reply.download()
+
+    title = getattr(media, "file_name", None) or getattr(media, "title", None) or "Audio File"
+    duration = getattr(media, "duration", 0) or 0
+
+    track = Track(
+        title=title,
+        url="",
+        duration=duration,
+        thumbnail=None,
+        requested_by=user.id,
+        requested_by_name=user.first_name,
+        file=file_path,
+    )
+
+    if force and call.is_active(chat_id):
+        queue.add_next(chat_id, track)
+        await safe_edit(status_msg, f"Force playing: <b>{title}</b>")
+        await _skip_to_next(chat_id)
+        return
+
+    pos = queue.add(chat_id, track)
+    if pos == 0 or not call.is_active(chat_id):
+        await safe_edit(status_msg, f"Playing: <b>{title}</b>")
+        await _start_playing(chat_id, status_msg)
+    else:
+        await safe_edit(status_msg, f"Added to queue at position <b>#{pos}</b>: <b>{title}</b>")
+
+
+async def _start_playing(chat_id: int, status_msg=None):
+    current = queue.current(chat_id)
+    if not current:
+        return
+
+    if not current.file and not current.is_live:
+        if status_msg:
+            await safe_edit(status_msg, f"<i>Downloading</i> <b>{current.title}</b>...")
+        info = await youtube.download(current.url)
+        if not info:
+            if status_msg:
+                await safe_edit(status_msg, "Download failed. Skipping...")
+            queue.skip(chat_id)
+            await _start_playing(chat_id, status_msg)
+            return
+        current.file = info["file"]
+
+    try:
+        await call.play(chat_id, current, queue)
+    except RuntimeError as e:
+        if status_msg:
+            await safe_edit(status_msg, str(e))
+
+
+async def _skip_to_next(chat_id: int):
+    next_track = queue.skip(chat_id)
+    if next_track:
+        await _start_playing(chat_id, None)
+
+
+def _parse_duration(duration_str: str) -> int:
+    """Parse 'HH:MM:SS' or 'MM:SS' string to seconds."""
+    try:
+        parts = [int(x) for x in str(duration_str).split(":")]
+        if len(parts) == 3:
+            return parts[0] * 3600 + parts[1] * 60 + parts[2]
+        elif len(parts) == 2:
+            return parts[0] * 60 + parts[1]
+        return int(parts[0])
+    except Exception:
+        return 0
