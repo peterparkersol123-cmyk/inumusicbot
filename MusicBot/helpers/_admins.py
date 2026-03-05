@@ -1,6 +1,6 @@
 import logging
 from pyrogram import Client
-from pyrogram.types import ChatMember
+from pyrogram.enums import ChatMembersFilter, ChatMemberStatus
 from pyrogram.errors import UserNotParticipant, ChatAdminRequired
 
 LOGGER = logging.getLogger("MusicBot.Admins")
@@ -15,7 +15,7 @@ async def get_admins(client: Client, chat_id: int, force_refresh: bool = False) 
 
     admins: set[int] = set()
     try:
-        async for member in client.get_chat_members(chat_id, filter="administrators"):
+        async for member in client.get_chat_members(chat_id, filter=ChatMembersFilter.ADMINISTRATORS):
             if not member.user.is_bot:
                 admins.add(member.user.id)
     except Exception as e:
@@ -38,7 +38,7 @@ async def is_chat_admin(client: Client, chat_id: int, user_id: int) -> bool:
     """Check via API directly (bypasses cache)."""
     try:
         member = await client.get_chat_member(chat_id, user_id)
-        return member.status in ("administrator", "creator")
+        return member.status in (ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER)
     except (UserNotParticipant, ChatAdminRequired):
         return False
     except Exception:
