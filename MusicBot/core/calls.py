@@ -1,4 +1,5 @@
 import logging
+import os
 
 from pytgcalls import PyTgCalls, filters as tg_filters
 from pytgcalls.types import MediaStream, AudioQuality
@@ -29,6 +30,8 @@ class TgCall:
         async def _on_stream_end(_, update):
             chat_id = update.chat_id
             queue = self._chat_queue.get(chat_id)
+            current_title = queue.current(chat_id).title if queue and queue.current(chat_id) else "?"
+            LOGGER.info(f"[{chat_id}] stream_end fired — track: {current_title!r}")
             if queue is not None:
                 await self._handle_stream_end(chat_id, queue)
 
@@ -58,6 +61,11 @@ class TgCall:
     async def play(self, chat_id: int, track: Track, queue: Queue):
         client = self._pick_client(chat_id)
         stream = self._make_stream(track)
+        if track.file and os.path.exists(track.file):
+            size_kb = os.path.getsize(track.file) / 1024
+            LOGGER.info(f"[{chat_id}] Playing file: {track.file} ({size_kb:.1f} KiB) — {track.title!r}")
+        elif track.stream_url:
+            LOGGER.info(f"[{chat_id}] Playing stream URL — {track.title!r}")
         try:
             await client.play(chat_id, stream)
             self._active.add(chat_id)
