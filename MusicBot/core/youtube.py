@@ -28,6 +28,14 @@ _semaphore = asyncio.Semaphore(5)
 # Their servers fetch from YouTube so we never hit YouTube's IP blocks directly
 PIPED_INSTANCES = [
     "https://pipedapi.kavin.rocks",
+    "https://pipedapi-libre.kavin.rocks",
+    "https://pipedapi.nosebs.ru",
+    "https://pipedapi.ducks.party",
+    "https://pipedapi.owo.si",
+    "https://pipedapi.darkness.services",
+    "https://pipedapi.reallyaweso.me",
+    "https://piped-api.codespace.cz",
+    "https://api.piped.private.coffee",
     "https://pipedapi.adminforge.de",
     "https://piped-api.privacy.com.de",
     "https://api.piped.yt",
@@ -172,6 +180,7 @@ class YouTube:
                         url, timeout=aiohttp.ClientTimeout(total=10)
                     ) as resp:
                         if resp.status != 200:
+                            LOGGER.warning(f"Piped {instance} HTTP {resp.status} for {video_id}")
                             continue
                         data = await resp.json()
 
@@ -187,6 +196,7 @@ class YouTube:
                         best_audio = stream
 
                 if not best_audio or not best_audio.get("url"):
+                    LOGGER.warning(f"Piped {instance} returned no usable audio streams for {video_id} (streams: {len(data.get('audioStreams', []))})")
                     continue
 
                 LOGGER.info(f"Piped stream resolved via {instance} for {video_id}")
