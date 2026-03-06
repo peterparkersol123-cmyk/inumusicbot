@@ -211,8 +211,28 @@ async def _start_playing(chat_id: int, status_msg=None):
     try:
         await call.play(chat_id, current, queue)
     except RuntimeError as e:
+        err = str(e)
+        # Auto-invite the assistant if it's not in the group yet
+        if "Assistant not in this group" in err:
+            try:
+                from MusicBot import bot, userbot
+                assistant_ids = []
+                for ub in userbot.clients:
+                    me = await ub.get_me()
+                    assistant_ids.append(me.id)
+                if assistant_ids:
+                    await bot.add_chat_members(chat_id, assistant_ids)
+                    # Retry after adding
+                    await call.play(chat_id, current, queue)
+                    return
+            except Exception as invite_err:
+                err = (
+                    f"❌ Couldn't auto-add assistant ({invite_err}).\n"
+                    "Please add the assistant account manually as an admin "
+                    "with 'Manage voice chats' permission."
+                )
         if status_msg:
-            await safe_edit(status_msg, str(e))
+            await safe_edit(status_msg, err)
 
 
 async def _skip_to_next(chat_id: int):
