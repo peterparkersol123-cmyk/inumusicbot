@@ -64,25 +64,11 @@ async def _play_handler(client: Client, message: Message, query: str, force: boo
 
     # --- Single YouTube URL or search query ---
     if youtube.is_url(query):
-        info = await youtube.get_info(query)
+        # Use oEmbed for fast title/thumbnail lookup — no yt-dlp, no bot-detection issues.
+        # SoundCloud will be used for the actual audio download.
+        info = await youtube.get_oembed_info(query)
         if not info:
-            # Info fetch failed (YouTube bot-detection on server IP).
-            # Still queue the URL and let the download step handle it.
-            track = Track(
-                title="Loading...",
-                url=query,
-                duration=0,
-                thumbnail=None,
-                requested_by=user.id,
-                requested_by_name=user.first_name,
-            )
-            pos = queue.add(chat_id, track)
-            if pos == 0 or not call.is_active(chat_id):
-                await safe_edit(status_msg, "<i>Downloading...</i>")
-                await _start_playing(chat_id, status_msg)
-            else:
-                await safe_edit(status_msg, f"Added to queue at position <b>#{pos}</b>")
-            return
+            return await safe_edit(status_msg, "❌ Could not fetch song info. The video may be private or unavailable.")
     else:
         results = await youtube.search(query, limit=1)
         if not results:
@@ -174,31 +160,28 @@ async def _start_playing(chat_id: int, status_msg=None):
         return
 
     if not current.file and not current.stream_url and not current.is_live:
+        # Resolve title via oEmbed if still unset (edge case: direct URL with failed oEmbed earlier)
+        if not current.title or current.title == "Unknown":
+            oembed = await youtube.get_oembed_info(current.url)
+            if oembed and oembed.get("title"):
+                current.title = oembed["title"]
+
+        search_title = current.title
+        if not search_title or search_title == "Unknown":
+            if status_msg:
+                await safe_edit(status_msg, "❌ Could not resolve song title.")
+            queue.skip(chat_id)
+            return
+
         if status_msg:
-            await safe_edit(status_msg, f"<i>Downloading</i> <b>{current.title}</b>...")
+            await safe_edit(status_msg, f"<i>Downloading</i> <b>{search_title}</b>...")
 
-        info = await youtube.download(current.url)
-
-        # YouTube blocked (datacenter IP) — resolve title if needed, then try SoundCloud
-        if not info:
-            search_title = current.title
-            if search_title == "Loading...":
-                oembed = await youtube.get_oembed_info(current.url)
-                if oembed:
-                    search_title = oembed["title"]
-                    current.title = search_title
-
-            if search_title and search_title != "Loading...":
-                if status_msg:
-                    await safe_edit(
-                        status_msg,
-                        f"<i>YouTube blocked, trying SoundCloud for</i> <b>{search_title}</b>..."
-                    )
-                info = await youtube.download_soundcloud(search_title)
+        # Go straight to SoundCloud — YouTube is blocked on cloud server IPs
+        info = await youtube.download_soundcloud(search_title)
 
         if not info:
             if status_msg:
-                await safe_edit(status_msg, "❌ Could not download from YouTube or SoundCloud.")
+                await safe_edit(status_msg, "❌ Could not download from SoundCloud.")
             queue.skip(chat_id)
             await _start_playing(chat_id, status_msg)
             return

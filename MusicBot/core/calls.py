@@ -51,7 +51,7 @@ class TgCall:
         ffmpeg_params = f"-ss {seek}" if seek else None
         return MediaStream(
             source,
-            audio_parameters=AudioQuality.HIGH,
+            audio_parameters=AudioQuality.MEDIUM,
             ffmpeg_parameters=ffmpeg_params,
         )
 
