@@ -162,27 +162,36 @@ async def _start_playing(chat_id: int, status_msg=None):
     if not current.file and not current.stream_url and not current.is_live:
         info = None
 
-        # --- Resolve title if needed (oEmbed is fast and works from any IP) ---
-        if not current.title or current.title == "Unknown":
-            if current.url and youtube.is_url(current.url):
+        # --- Try YouTube (yt-dlp direct, Invidious fallback) ---
+        if current.url and youtube.is_url(current.url):
+            if status_msg:
+                await safe_edit(status_msg, f"<i>Fetching</i> <b>{current.title}</b>...")
+            info = await youtube.get_audio_stream(current.url)
+            if info:
+                LOGGER.info(f"[{chat_id}] YouTube stream OK for {current.url}")
+
+        # --- Fall back to SoundCloud ---
+        if not info:
+            # Resolve title via oEmbed if we don't have it yet
+            if (not current.title or current.title == "Unknown") and current.url and youtube.is_url(current.url):
                 oembed = await youtube.get_oembed_info(current.url)
                 if oembed and oembed.get("title"):
                     current.title = oembed["title"]
 
-        search_title = current.title
-        if not search_title or search_title == "Unknown":
-            if status_msg:
-                await safe_edit(status_msg, "❌ Could not resolve song title.")
-            queue.skip(chat_id)
-            return
+            search_title = current.title
+            if not search_title or search_title == "Unknown":
+                if status_msg:
+                    await safe_edit(status_msg, "❌ Could not resolve song title.")
+                queue.skip(chat_id)
+                return
 
-        if status_msg:
-            await safe_edit(status_msg, f"<i>Searching SoundCloud for</i> <b>{search_title}</b>...")
-        info = await youtube.download_soundcloud(search_title)
+            if status_msg:
+                await safe_edit(status_msg, f"<i>Searching SoundCloud for</i> <b>{search_title}</b>...")
+            info = await youtube.download_soundcloud(search_title)
 
         if not info:
             if status_msg:
-                await safe_edit(status_msg, "❌ Could not fetch audio from SoundCloud.")
+                await safe_edit(status_msg, "❌ Could not fetch audio.")
             queue.skip(chat_id)
             await _start_playing(chat_id, status_msg)
             return

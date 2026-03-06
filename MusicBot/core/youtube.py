@@ -148,6 +148,82 @@ class YouTube:
         return None
 
     # -------------------------
+    # YouTube audio stream (yt-dlp direct, then Invidious fallback)
+    # -------------------------
+    async def get_audio_stream(self, url: str) -> dict | None:
+        """Get YouTube audio stream URL.
+        1. Try yt-dlp directly — works when the host IP isn't datacenter-blocked.
+        2. Fall back to Invidious — their servers proxy the request to YouTube.
+        """
+        # Try yt-dlp with player clients that have lighter bot-detection
+        for player_client in [["tv_embedded"], ["web"]]:
+            opts = {
+                "quiet": True,
+                "no_warnings": True,
+                "skip_download": True,
+                "format": "bestaudio[ext=webm]/bestaudio/best",
+                "noplaylist": True,
+                "extractor_args": {"youtube": {"player_client": player_client}},
+            }
+            if self._proxy:
+                opts["proxy"] = self._proxy
+            if self._cookies_file and os.path.exists(self._cookies_file):
+                opts["cookiefile"] = self._cookies_file
+            try:
+                loop = asyncio.get_event_loop()
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(None, self._extract_stream_url_sync, url, opts),
+                    timeout=20.0,
+                )
+                if result:
+                    LOGGER.info(f"YouTube stream via yt-dlp {player_client} for {url}")
+                    return result
+            except asyncio.TimeoutError:
+                LOGGER.warning(f"yt-dlp {player_client} timed out for {url}")
+            except Exception as e:
+                LOGGER.warning(f"yt-dlp {player_client} failed: {type(e).__name__}: {e}")
+
+        # Fall back to Invidious
+        video_id = self._extract_video_id(url)
+        if video_id:
+            LOGGER.info(f"yt-dlp failed, falling back to Invidious for {video_id}")
+            return await self._get_stream_invidious(video_id)
+
+        return None
+
+    def _extract_stream_url_sync(self, url: str, opts: dict) -> dict | None:
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                if not info:
+                    return None
+                stream_url = None
+                for fmt in sorted(
+                    info.get("formats", []),
+                    key=lambda f: (f.get("abr") or 0),
+                    reverse=True,
+                ):
+                    if fmt.get("vcodec") in (None, "none") and fmt.get("url"):
+                        stream_url = fmt["url"]
+                        break
+                if not stream_url:
+                    stream_url = info.get("url")
+                if not stream_url:
+                    return None
+                return {
+                    "title": info.get("title", "Unknown"),
+                    "duration": info.get("duration", 0),
+                    "thumbnail": info.get("thumbnail"),
+                    "url": url,
+                    "stream_url": stream_url,
+                    "file": None,
+                    "is_live": info.get("is_live", False),
+                }
+        except Exception as e:
+            LOGGER.warning(f"yt-dlp stream extraction failed: {e}")
+            return None
+
+    # -------------------------
     # Search
     # -------------------------
     async def search(self, query: str, limit: int = 5) -> list[dict]:
