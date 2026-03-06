@@ -3,6 +3,7 @@ import logging
 from pytgcalls import PyTgCalls, filters as tg_filters
 from pytgcalls.types import MediaStream, AudioQuality
 from pytgcalls.exceptions import NotInCallError, NoActiveGroupCall
+from pyrogram.errors import ChannelInvalid, ChatAdminRequired, ChatWriteForbidden
 from config import Config
 from MusicBot.helpers._queue import Queue, Track
 
@@ -62,7 +63,16 @@ class TgCall:
             self._active.add(chat_id)
             self._chat_queue[chat_id] = queue
         except NoActiveGroupCall:
-            raise RuntimeError("No active voice chat in this group. Start one first.")
+            raise RuntimeError("❌ No active voice chat. Start one in the group first.")
+        except (ChannelInvalid, KeyError):
+            raise RuntimeError(
+                "❌ Assistant not in this group.\n"
+                "Add the assistant account as an admin with 'Manage voice chats' permission."
+            )
+        except ChatAdminRequired:
+            raise RuntimeError(
+                "❌ Assistant needs admin rights with 'Manage voice chats' permission."
+            )
 
     async def _handle_stream_end(self, chat_id: int, queue: Queue):
         next_track = queue.next(chat_id)
