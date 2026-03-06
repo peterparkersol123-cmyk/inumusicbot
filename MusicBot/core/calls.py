@@ -1,6 +1,6 @@
 import logging
 
-from pytgcalls import PyTgCalls
+from pytgcalls import PyTgCalls, filters as tg_filters
 from pytgcalls.types import MediaStream, AudioQuality
 from pytgcalls.exceptions import NotInCallError, NoActiveGroupCall
 from config import Config
@@ -14,12 +14,22 @@ class TgCall:
         self._userbot = userbot
         self._clients: list[PyTgCalls] = []
         self._chat_client: dict[int, PyTgCalls] = {}
+        self._chat_queue: dict[int, Queue] = {}
         self._active: set[int] = set()
 
     def _build_clients(self):
         for ub in self._userbot.clients:
             client = PyTgCalls(ub)
             self._clients.append(client)
+            self._setup_handlers(client)
+
+    def _setup_handlers(self, client: PyTgCalls):
+        @client.on_update(tg_filters.stream_end)
+        async def _on_stream_end(_, update):
+            chat_id = update.chat_id
+            queue = self._chat_queue.get(chat_id)
+            if queue is not None:
+                await self._handle_stream_end(chat_id, queue)
 
     async def start(self):
         self._build_clients()
@@ -49,18 +59,10 @@ class TgCall:
         stream = self._make_stream(track)
         try:
             await client.play(chat_id, stream)
-            if chat_id not in self._active:
-                self._active.add(chat_id)
-                self._register_handlers(client, chat_id, queue)
+            self._active.add(chat_id)
+            self._chat_queue[chat_id] = queue
         except NoActiveGroupCall:
             raise RuntimeError("No active voice chat in this group. Start one first.")
-
-    def _register_handlers(self, client: PyTgCalls, chat_id: int, queue: Queue):
-        @client.on_stream_end()
-        async def _on_end(_, update):
-            if update.chat_id != chat_id:
-                return
-            await self._handle_stream_end(chat_id, queue)
 
     async def _handle_stream_end(self, chat_id: int, queue: Queue):
         next_track = queue.next(chat_id)
@@ -90,6 +92,7 @@ class TgCall:
                 pass
             self._active.discard(chat_id)
             self._chat_client.pop(chat_id, None)
+            self._chat_queue.pop(chat_id, None)
 
     async def seek(self, chat_id: int, seconds: int, track: Track):
         if track.is_live:

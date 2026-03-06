@@ -22,7 +22,7 @@ class Userbot:
                     api_id=Config.API_ID,
                     api_hash=Config.API_HASH,
                     session_string=session,
-                    no_updates=True,
+                    no_updates=False,
                 )
                 setattr(self, name, client)
                 self.clients.append(client)
