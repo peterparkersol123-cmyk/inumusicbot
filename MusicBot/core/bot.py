@@ -1,5 +1,5 @@
 import logging
-from pyrogram import Client, filters
+from pyrogram import Client, filters, enums
 from config import Config
 
 LOGGER = logging.getLogger("MusicBot.Bot")
@@ -12,7 +12,7 @@ class Bot(Client):
             api_id=Config.API_ID,
             api_hash=Config.API_HASH,
             bot_token=Config.BOT_TOKEN,
-            parse_mode="html",
+            parse_mode=enums.ParseMode.HTML,
             max_concurrent_transmissions=5,
             no_updates=False,
         )
