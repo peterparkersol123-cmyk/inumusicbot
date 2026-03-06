@@ -176,16 +176,36 @@ async def _start_playing(chat_id: int, status_msg=None):
     if not current.file and not current.stream_url and not current.is_live:
         if status_msg:
             await safe_edit(status_msg, f"<i>Downloading</i> <b>{current.title}</b>...")
+
         info = await youtube.download(current.url)
+
+        # YouTube blocked (datacenter IP) — resolve title if needed, then try SoundCloud
+        if not info:
+            search_title = current.title
+            if search_title == "Loading...":
+                oembed = await youtube.get_oembed_info(current.url)
+                if oembed:
+                    search_title = oembed["title"]
+                    current.title = search_title
+
+            if search_title and search_title != "Loading...":
+                if status_msg:
+                    await safe_edit(
+                        status_msg,
+                        f"<i>YouTube blocked, trying SoundCloud for</i> <b>{search_title}</b>..."
+                    )
+                info = await youtube.download_soundcloud(search_title)
+
         if not info:
             if status_msg:
-                await safe_edit(status_msg, "Download failed. Skipping...")
+                await safe_edit(status_msg, "❌ Could not download from YouTube or SoundCloud.")
             queue.skip(chat_id)
             await _start_playing(chat_id, status_msg)
             return
+
         current.file = info.get("file")
         current.stream_url = info.get("stream_url")
-        if current.title == "Loading..." and info.get("title"):
+        if info.get("title") and info["title"] != "Unknown":
             current.title = info["title"]
 
     try:

@@ -175,6 +175,91 @@ class YouTube:
             return []
 
     # -------------------------
+    # oEmbed — title/thumbnail without auth (works from any IP)
+    # -------------------------
+    async def get_oembed_info(self, url: str) -> dict | None:
+        """Fetch title and thumbnail via YouTube oEmbed (no API key, no proxy needed)."""
+        try:
+            oembed_url = (
+                "https://www.youtube.com/oembed"
+                f"?url={url}&format=json"
+            )
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    oembed_url, timeout=aiohttp.ClientTimeout(total=8)
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return {
+                            "title": data.get("title", "Unknown"),
+                            "thumbnail": data.get("thumbnail_url"),
+                            "duration": 0,
+                            "url": url,
+                            "is_live": False,
+                        }
+        except Exception as e:
+            LOGGER.debug(f"oEmbed failed for {url}: {e}")
+        return None
+
+    # -------------------------
+    # SoundCloud fallback (no bot-detection on datacenter IPs)
+    # -------------------------
+    async def download_soundcloud(self, query: str) -> dict | None:
+        """Search and download from SoundCloud — works on any IP without proxy."""
+        async with _semaphore:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, self._sc_download_sync, query)
+
+    def _sc_download_sync(self, query: str) -> dict | None:
+        opts = {
+            "format": "bestaudio/best",
+            "outtmpl": os.path.join(DOWNLOAD_DIR, "%(id)s.%(ext)s"),
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+            "playlist_items": "1",
+            "postprocessors": [
+                {
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "opus",
+                    "preferredquality": "0",
+                }
+            ],
+        }
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(f"scsearch1:{query}", download=True)
+                if not info:
+                    return None
+                # scsearch returns a playlist wrapper
+                entries = info.get("entries", [info])
+                if not entries:
+                    return None
+                entry = entries[0]
+
+                file_path = ydl.prepare_filename(entry)
+                base = os.path.splitext(file_path)[0]
+                for ext in (".opus", ".ogg", ".m4a", ".webm", ".mp3"):
+                    candidate = base + ext
+                    if os.path.exists(candidate):
+                        file_path = candidate
+                        break
+
+                return {
+                    "title": entry.get("title", query),
+                    "duration": int(entry.get("duration", 0)),
+                    "thumbnail": entry.get("thumbnail"),
+                    "url": entry.get("webpage_url", query),
+                    "file": file_path,
+                    "stream_url": None,
+                    "is_live": False,
+                    "source": "soundcloud",
+                }
+        except Exception as e:
+            LOGGER.error(f"SoundCloud download error for '{query}': {e}")
+            return None
+
+    # -------------------------
     # Download (with Invidious fallback)
     # -------------------------
     async def download(self, url: str, video: bool = False) -> dict | None:
