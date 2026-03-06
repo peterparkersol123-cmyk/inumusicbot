@@ -50,6 +50,19 @@ class YouTube:
             LOGGER.info(f"yt-dlp proxy configured: {self._proxy}")
         path = os.path.join(DOWNLOAD_DIR, "cookies.txt")
 
+        # Option 0: local file path (handy for running locally)
+        cookie_file = os.getenv("COOKIE_FILE", "").strip()
+        if cookie_file and os.path.exists(cookie_file):
+            self._cookies_file = cookie_file
+            LOGGER.info(f"YouTube cookies loaded from COOKIE_FILE: {cookie_file}")
+            return
+
+        # Also auto-load if cookies.txt already exists in downloads/ (placed there manually)
+        if os.path.exists(path):
+            self._cookies_file = path
+            LOGGER.info(f"YouTube cookies auto-loaded from {path}")
+            return
+
         # Option 1: base64-encoded cookies pasted directly as env var
         cookies_b64 = os.getenv("COOKIES_B64", "").strip()
         if cookies_b64:
@@ -152,11 +165,16 @@ class YouTube:
     # -------------------------
     async def get_audio_stream(self, url: str) -> dict | None:
         """Get YouTube audio stream URL.
-        1. Try yt-dlp directly — works when the host IP isn't datacenter-blocked.
-        2. Fall back to Invidious — their servers proxy the request to YouTube.
+        1. android_vr — no cookies, no JS needed, works on any IP.
+        2. ios — cookies supported, no JS challenge.
+        3. Invidious — their servers proxy the request to YouTube.
         """
-        # Try yt-dlp with player clients that have lighter bot-detection
-        for player_client in [["tv_embedded"], ["web"]]:
+        # (client_name, use_cookies)
+        clients = [
+            (["android_vr"], False),  # no cookies: android_vr rejects them
+            (["ios"], True),          # cookies OK, no JS needed
+        ]
+        for player_client, use_cookies in clients:
             opts = {
                 "quiet": True,
                 "no_warnings": True,
@@ -167,7 +185,7 @@ class YouTube:
             }
             if self._proxy:
                 opts["proxy"] = self._proxy
-            if self._cookies_file and os.path.exists(self._cookies_file):
+            if use_cookies and self._cookies_file and os.path.exists(self._cookies_file):
                 opts["cookiefile"] = self._cookies_file
             try:
                 loop = asyncio.get_event_loop()
