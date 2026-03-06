@@ -217,6 +217,74 @@ class YouTube:
         return None
 
     # -------------------------
+    # YouTube direct stream (alternative player clients)
+    # -------------------------
+    async def get_stream_ytdlp(self, url: str) -> dict | None:
+        """Try to get a YouTube stream URL using player clients that may bypass
+        datacenter IP blocks (tv_embedded uses a different API endpoint)."""
+        for player_client in [["tv_embedded"], ["android_creator"], ["mweb"]]:
+            opts = {
+                "quiet": True,
+                "no_warnings": True,
+                "skip_download": True,
+                "format": "bestaudio[ext=webm]/bestaudio/best",
+                "noplaylist": True,
+                "extractor_args": {"youtube": {"player_client": player_client}},
+            }
+            if self._proxy:
+                opts["proxy"] = self._proxy
+            if self._cookies_file and os.path.exists(self._cookies_file):
+                opts["cookiefile"] = self._cookies_file
+            try:
+                loop = asyncio.get_event_loop()
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(None, self._extract_stream_url_sync, url, opts),
+                    timeout=20.0,
+                )
+                if result:
+                    LOGGER.info(f"YouTube stream URL obtained via {player_client}")
+                    return result
+            except asyncio.TimeoutError:
+                LOGGER.warning(f"YouTube {player_client} timed out")
+            except Exception as e:
+                LOGGER.warning(f"YouTube {player_client} failed: {type(e).__name__}: {e}")
+
+        return None
+
+    def _extract_stream_url_sync(self, url: str, opts: dict) -> dict | None:
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                if not info:
+                    return None
+                # Find best audio stream URL
+                stream_url = None
+                for fmt in sorted(
+                    info.get("formats", []),
+                    key=lambda f: (f.get("abr") or 0),
+                    reverse=True,
+                ):
+                    if fmt.get("vcodec") in (None, "none") and fmt.get("url"):
+                        stream_url = fmt["url"]
+                        break
+                if not stream_url:
+                    stream_url = info.get("url")
+                if not stream_url:
+                    return None
+                return {
+                    "title": info.get("title", "Unknown"),
+                    "duration": info.get("duration", 0),
+                    "thumbnail": info.get("thumbnail"),
+                    "url": url,
+                    "stream_url": stream_url,
+                    "file": None,
+                    "is_live": info.get("is_live", False),
+                }
+        except Exception as e:
+            LOGGER.warning(f"yt-dlp stream extraction failed: {e}")
+            return None
+
+    # -------------------------
     # Search
     # -------------------------
     async def search(self, query: str, limit: int = 5) -> list[dict]:

@@ -162,12 +162,18 @@ async def _start_playing(chat_id: int, status_msg=None):
     if not current.file and not current.stream_url and not current.is_live:
         info = None
 
-        # --- Try Piped first (YouTube middleman — no cookies/proxy needed) ---
+        # --- Try YouTube directly (tv_embedded/android_creator player clients) ---
         if current.url and youtube.is_url(current.url):
+            if status_msg:
+                await safe_edit(status_msg, f"<i>Fetching</i> <b>{current.title}</b>...")
+            info = await youtube.get_stream_ytdlp(current.url)
+            if info:
+                LOGGER.info(f"[{chat_id}] YouTube direct stream OK for {current.url}")
+
+        # --- Try Piped middleman ---
+        if not info and current.url and youtube.is_url(current.url):
             video_id = youtube._extract_video_id(current.url)
             if video_id:
-                if status_msg:
-                    await safe_edit(status_msg, f"<i>Fetching</i> <b>{current.title}</b>...")
                 info = await youtube.get_stream_piped(video_id)
                 if info:
                     LOGGER.info(f"[{chat_id}] Using Piped stream for {video_id}")
