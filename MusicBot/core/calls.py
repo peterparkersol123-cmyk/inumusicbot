@@ -2,7 +2,7 @@ import logging
 
 from pytgcalls import PyTgCalls
 from pytgcalls.types import MediaStream, AudioQuality
-from pytgcalls.exceptions import NotInCallError, AlreadyJoinedError, NoActiveGroupCall
+from pytgcalls.exceptions import NotInCallError, NoActiveGroupCall
 from config import Config
 from MusicBot.helpers._queue import Queue, Track
 
@@ -52,9 +52,6 @@ class TgCall:
             if chat_id not in self._active:
                 self._active.add(chat_id)
                 self._register_handlers(client, chat_id, queue)
-        except AlreadyJoinedError:
-            await client.play(chat_id, stream)
-            self._active.add(chat_id)
         except NoActiveGroupCall:
             raise RuntimeError("No active voice chat in this group. Start one first.")
 
