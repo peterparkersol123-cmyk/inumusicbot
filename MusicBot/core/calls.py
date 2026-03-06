@@ -2,7 +2,7 @@ import logging
 
 from pytgcalls import PyTgCalls
 from pytgcalls.types import MediaStream, AudioQuality
-from pytgcalls.exceptions import NotInGroupCallError, AlreadyJoinedError, NoActiveGroupCall
+from pytgcalls.exceptions import NotInCallError, AlreadyJoinedError, NoActiveGroupCall
 from config import Config
 from MusicBot.helpers._queue import Queue, Track
 
@@ -89,7 +89,7 @@ class TgCall:
         if client:
             try:
                 await client.leave(chat_id)
-            except NotInGroupCallError:
+            except NotInCallError:
                 pass
             self._active.discard(chat_id)
             self._chat_client.pop(chat_id, None)
