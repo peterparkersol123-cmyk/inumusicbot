@@ -97,8 +97,8 @@ class TgCall:
         client = self._chat_client.get(chat_id)
         if client:
             try:
-                await client.leave(chat_id)
-            except NotInCallError:
+                await client.leave_call(chat_id)
+            except (NotInCallError, NoActiveGroupCall):
                 pass
             self._active.discard(chat_id)
             self._chat_client.pop(chat_id, None)
