@@ -33,19 +33,35 @@ class YouTube:
     # Cookie management
     # -------------------------
     async def load_cookies(self):
+        path = os.path.join(DOWNLOAD_DIR, "cookies.txt")
+
+        # Option 1: base64-encoded cookies pasted directly as env var
+        cookies_b64 = os.getenv("COOKIES_B64", "").strip()
+        if cookies_b64:
+            try:
+                import base64
+                content = base64.b64decode(cookies_b64).decode("utf-8")
+                with open(path, "w") as f:
+                    f.write(content)
+                self._cookies_file = path
+                LOGGER.info("YouTube cookies loaded from COOKIES_B64.")
+                return
+            except Exception as e:
+                LOGGER.warning(f"Failed to load cookies from COOKIES_B64: {e}")
+
+        # Option 2: download from URL
         if not Config.COOKIE_URL:
             return
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(Config.COOKIE_URL, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                     if resp.status == 200:
-                        path = os.path.join(DOWNLOAD_DIR, "cookies.txt")
                         with open(path, "w") as f:
                             f.write(await resp.text())
                         self._cookies_file = path
-                        LOGGER.info("YouTube cookies loaded.")
+                        LOGGER.info("YouTube cookies loaded from COOKIE_URL.")
         except Exception as e:
-            LOGGER.warning(f"Failed to load cookies: {e}")
+            LOGGER.warning(f"Failed to load cookies from COOKIE_URL: {e}")
 
     # -------------------------
     # URL helpers
