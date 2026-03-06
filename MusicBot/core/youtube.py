@@ -102,6 +102,7 @@ class YouTube:
             "socket_timeout": 30,
             "retries": 3,
             "noplaylist": True,
+            "extractor_args": {"youtube": {"player_client": ["web", "tv_embedded"]}},
         }
         if self._cookies_file and os.path.exists(self._cookies_file):
             opts["cookiefile"] = self._cookies_file
@@ -155,12 +156,15 @@ class YouTube:
             "no_warnings": True,
             "skip_download": True,
             "noplaylist": True,
+            "extractor_args": {"youtube": {"player_client": ["web", "tv_embedded"]}},
         }
         if self._cookies_file and os.path.exists(self._cookies_file):
             opts["cookiefile"] = self._cookies_file
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
+                if not info:
+                    return None
                 return {
                     "title": info.get("title", "Unknown"),
                     "duration": info.get("duration", 0),

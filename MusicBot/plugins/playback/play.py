@@ -65,6 +65,24 @@ async def _play_handler(client: Client, message: Message, query: str, force: boo
     # --- Single YouTube URL or search query ---
     if youtube.is_url(query):
         info = await youtube.get_info(query)
+        if not info:
+            # Info fetch failed (YouTube bot-detection on server IP).
+            # Still queue the URL and let the download step handle it.
+            track = Track(
+                title="Loading...",
+                url=query,
+                duration=0,
+                thumbnail=None,
+                requested_by=user.id,
+                requested_by_name=user.first_name,
+            )
+            pos = queue.add(chat_id, track)
+            if pos == 0 or not call.is_active(chat_id):
+                await safe_edit(status_msg, "<i>Downloading...</i>")
+                await _start_playing(chat_id, status_msg)
+            else:
+                await safe_edit(status_msg, f"Added to queue at position <b>#{pos}</b>")
+            return
     else:
         results = await youtube.search(query, limit=1)
         if not results:
@@ -77,7 +95,7 @@ async def _play_handler(client: Client, message: Message, query: str, force: boo
         }
 
     if not info:
-        return await safe_edit(status_msg, "Could not fetch song info. Try a direct YouTube link.")
+        return await safe_edit(status_msg, "No results found. Try a different query.")
 
     # Duration limit
     if info.get("duration", 0) > Config.DURATION_LIMIT and not info.get("is_live"):
