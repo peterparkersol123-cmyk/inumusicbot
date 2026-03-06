@@ -1,6 +1,6 @@
 pyrofork
 TgCrypto~=1.2.5
-py-tgcalls~=2.2.8
+py-tgcalls~=2.2.11
 yt-dlp>=2026.3.3
 aiohttp~=3.11.0
 aiosqlite~=0.21.0
