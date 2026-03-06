@@ -173,7 +173,7 @@ async def _start_playing(chat_id: int, status_msg=None):
     if not current:
         return
 
-    if not current.file and not current.is_live:
+    if not current.file and not current.stream_url and not current.is_live:
         if status_msg:
             await safe_edit(status_msg, f"<i>Downloading</i> <b>{current.title}</b>...")
         info = await youtube.download(current.url)
@@ -183,7 +183,10 @@ async def _start_playing(chat_id: int, status_msg=None):
             queue.skip(chat_id)
             await _start_playing(chat_id, status_msg)
             return
-        current.file = info["file"]
+        current.file = info.get("file")
+        current.stream_url = info.get("stream_url")
+        if current.title == "Loading..." and info.get("title"):
+            current.title = info["title"]
 
     try:
         await call.play(chat_id, current, queue)

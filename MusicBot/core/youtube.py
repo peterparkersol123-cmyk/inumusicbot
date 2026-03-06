@@ -17,10 +17,20 @@ YOUTUBE_REGEX = re.compile(
     r"[a-zA-Z0-9_-]+"
 )
 
+VIDEO_ID_REGEX = re.compile(r"(?:v=|youtu\.be/|shorts/)([a-zA-Z0-9_-]{11})")
+
 DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 _semaphore = asyncio.Semaphore(5)
+
+# Public Invidious instances — tried in order, first success wins
+INVIDIOUS_INSTANCES = [
+    "https://inv.nadeko.net",
+    "https://invidious.privacydev.net",
+    "https://yt.artemislena.eu",
+    "https://invidious.lunar.icu",
+]
 
 
 class YouTube:
@@ -72,6 +82,66 @@ class YouTube:
     def is_playlist(self, query: str) -> bool:
         return "playlist?list=" in query or "&list=" in query
 
+    def _extract_video_id(self, url: str) -> str | None:
+        m = VIDEO_ID_REGEX.search(url)
+        return m.group(1) if m else None
+
+    # -------------------------
+    # Invidious fallback
+    # -------------------------
+    async def _get_stream_invidious(self, video_id: str) -> dict | None:
+        """Get direct audio stream URL via Invidious public API (no bot-detection)."""
+        fields = "title,lengthSeconds,videoThumbnails,adaptiveFormats,formatStreams"
+        for instance in INVIDIOUS_INSTANCES:
+            try:
+                url = f"{instance}/api/v1/videos/{video_id}?fields={fields}"
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        url, timeout=aiohttp.ClientTimeout(total=10)
+                    ) as resp:
+                        if resp.status != 200:
+                            continue
+                        data = await resp.json()
+
+                # Prefer audio-only adaptive formats (opus/webm or aac/mp4)
+                best_audio = None
+                for fmt in data.get("adaptiveFormats", []):
+                    if not fmt.get("type", "").startswith("audio/"):
+                        continue
+                    if not fmt.get("url"):
+                        continue
+                    bitrate = int(fmt.get("bitrate", 0))
+                    if best_audio is None or bitrate > int(best_audio.get("bitrate", 0)):
+                        best_audio = fmt
+
+                # Fall back to combined format streams
+                if not best_audio:
+                    streams = data.get("formatStreams", [])
+                    best_audio = streams[-1] if streams else None
+
+                if not best_audio or not best_audio.get("url"):
+                    continue
+
+                thumbs = data.get("videoThumbnails", [])
+                thumbnail = thumbs[0]["url"] if thumbs else None
+
+                LOGGER.info(f"Invidious stream resolved via {instance} for {video_id}")
+                return {
+                    "title": data.get("title", "Unknown"),
+                    "duration": int(data.get("lengthSeconds", 0)),
+                    "thumbnail": thumbnail,
+                    "url": f"https://youtube.com/watch?v={video_id}",
+                    "stream_url": best_audio["url"],
+                    "file": None,
+                    "is_live": False,
+                }
+            except Exception as e:
+                LOGGER.debug(f"Invidious {instance} failed: {e}")
+                continue
+
+        LOGGER.error(f"All Invidious instances failed for {video_id}")
+        return None
+
     # -------------------------
     # Search
     # -------------------------
@@ -100,12 +170,23 @@ class YouTube:
             return []
 
     # -------------------------
-    # Download
+    # Download (with Invidious fallback)
     # -------------------------
     async def download(self, url: str, video: bool = False) -> dict | None:
         async with _semaphore:
             loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(None, self._download_sync, url, video)
+            result = await loop.run_in_executor(None, self._download_sync, url, video)
+            if result:
+                return result
+
+            # yt-dlp failed — try Invidious for audio streams
+            if not video:
+                video_id = self._extract_video_id(url)
+                if video_id:
+                    LOGGER.info(f"yt-dlp failed, falling back to Invidious for {video_id}")
+                    return await self._get_stream_invidious(video_id)
+
+            return None
 
     def _download_sync(self, url: str, video: bool) -> dict | None:
         opts = {
@@ -156,6 +237,7 @@ class YouTube:
                     "thumbnail": info.get("thumbnail"),
                     "url": url,
                     "file": file_path,
+                    "stream_url": None,
                     "is_live": info.get("is_live", False),
                 }
         except yt_dlp.utils.DownloadError as e:
@@ -164,7 +246,17 @@ class YouTube:
 
     async def get_info(self, url: str) -> dict | None:
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._get_info_sync, url)
+        result = await loop.run_in_executor(None, self._get_info_sync, url)
+        if result:
+            return result
+
+        # yt-dlp info fetch failed — try Invidious for metadata
+        video_id = self._extract_video_id(url)
+        if video_id:
+            LOGGER.info(f"yt-dlp info failed, trying Invidious for {video_id}")
+            return await self._get_stream_invidious(video_id)
+
+        return None
 
     def _get_info_sync(self, url: str) -> dict | None:
         opts = {
