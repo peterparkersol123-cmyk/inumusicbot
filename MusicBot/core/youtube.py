@@ -24,6 +24,16 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 _semaphore = asyncio.Semaphore(5)
 
+# Public Piped API instances — act as a middleman/proxy for YouTube
+# Their servers fetch from YouTube so we never hit YouTube's IP blocks directly
+PIPED_INSTANCES = [
+    "https://pipedapi.kavin.rocks",
+    "https://pipedapi.adminforge.de",
+    "https://piped-api.privacy.com.de",
+    "https://api.piped.yt",
+    "https://pipedapi.leptons.xyz",
+]
+
 # Public Invidious instances — tried in order, first success wins
 INVIDIOUS_INSTANCES = [
     "https://inv.nadeko.net",
@@ -145,6 +155,55 @@ class YouTube:
                 continue
 
         LOGGER.error(f"All Invidious instances failed for {video_id}")
+        return None
+
+    # -------------------------
+    # Piped middleman (primary YouTube proxy)
+    # -------------------------
+    async def get_stream_piped(self, video_id: str) -> dict | None:
+        """Get direct audio stream URL via Piped public API.
+        Piped acts as a middleman — their servers hit YouTube so we never do.
+        No cookies, no proxy, no bot-detection issues on our end."""
+        for instance in PIPED_INSTANCES:
+            try:
+                url = f"{instance}/streams/{video_id}"
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        url, timeout=aiohttp.ClientTimeout(total=10)
+                    ) as resp:
+                        if resp.status != 200:
+                            continue
+                        data = await resp.json()
+
+                # Pick highest-bitrate audio-only stream
+                best_audio = None
+                for stream in data.get("audioStreams", []):
+                    if stream.get("videoOnly"):
+                        continue
+                    if not stream.get("url"):
+                        continue
+                    bitrate = int(stream.get("bitrate", 0))
+                    if best_audio is None or bitrate > int(best_audio.get("bitrate", 0)):
+                        best_audio = stream
+
+                if not best_audio or not best_audio.get("url"):
+                    continue
+
+                LOGGER.info(f"Piped stream resolved via {instance} for {video_id}")
+                return {
+                    "title": data.get("title", "Unknown"),
+                    "duration": int(data.get("duration", 0)),
+                    "thumbnail": data.get("thumbnailUrl"),
+                    "url": f"https://youtube.com/watch?v={video_id}",
+                    "stream_url": best_audio["url"],
+                    "file": None,
+                    "is_live": data.get("livestream", False),
+                }
+            except Exception as e:
+                LOGGER.warning(f"Piped {instance} failed: {type(e).__name__}: {e}")
+                continue
+
+        LOGGER.error(f"All Piped instances failed for {video_id}")
         return None
 
     # -------------------------
