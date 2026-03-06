@@ -27,6 +27,8 @@ _semaphore = asyncio.Semaphore(5)
 # Public Invidious instances — tried in order, first success wins
 INVIDIOUS_INSTANCES = [
     "https://inv.nadeko.net",
+    "https://yewtu.be",
+    "https://invidious.flokinet.to",
     "https://invidious.privacydev.net",
     "https://yt.artemislena.eu",
     "https://invidious.lunar.icu",
@@ -36,6 +38,7 @@ INVIDIOUS_INSTANCES = [
 class YouTube:
     def __init__(self):
         self._cookies_file: str | None = None
+        self._proxy: str | None = os.getenv("YTDLP_PROXY", "").strip() or None
         self._search_cache: dict[str, tuple[list, float]] = {}
         self._CACHE_TTL = 600  # 10 minutes
 
@@ -43,6 +46,8 @@ class YouTube:
     # Cookie management
     # -------------------------
     async def load_cookies(self):
+        if self._proxy:
+            LOGGER.info(f"yt-dlp proxy configured: {self._proxy}")
         path = os.path.join(DOWNLOAD_DIR, "cookies.txt")
 
         # Option 1: base64-encoded cookies pasted directly as env var
@@ -136,7 +141,7 @@ class YouTube:
                     "is_live": False,
                 }
             except Exception as e:
-                LOGGER.debug(f"Invidious {instance} failed: {e}")
+                LOGGER.warning(f"Invidious {instance} failed: {type(e).__name__}: {e}")
                 continue
 
         LOGGER.error(f"All Invidious instances failed for {video_id}")
@@ -201,6 +206,8 @@ class YouTube:
             "noplaylist": True,
             "extractor_args": {"youtube": {"player_client": ["ios", "web"]}},
         }
+        if self._proxy:
+            opts["proxy"] = self._proxy
         if self._cookies_file and os.path.exists(self._cookies_file):
             opts["cookiefile"] = self._cookies_file
 
@@ -266,6 +273,8 @@ class YouTube:
             "noplaylist": True,
             "extractor_args": {"youtube": {"player_client": ["ios", "web"]}},
         }
+        if self._proxy:
+            opts["proxy"] = self._proxy
         if self._cookies_file and os.path.exists(self._cookies_file):
             opts["cookiefile"] = self._cookies_file
         try:
